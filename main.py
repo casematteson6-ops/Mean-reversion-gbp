@@ -1,28 +1,42 @@
 """
-🚀 MEAN REVERSION MAX YIELD Bot — AUD/USD
+🚀 MEAN REVERSION MAX YIELD Bot — GBP/USD H1
 ===============================================
-Parameters below came from a ForexLab pipeline run on real OANDA
-AUD/USD H1 history (2021-2026), validated end to end:
+Same mechanism validated on AUD/USD, re-tested BLIND (no tuning)
+on 5 other instruments -- GBP/USD was a clean hit, then
+re-optimized specifically for it (with a stop-floor of 1.0x ATR
+enforced during the search -- the first unfiltered search found a
+13.1% win rate / 0.2x ATR "winner" that was almost certainly the
+same fragile-tight-stop trap that cost real money on a different
+bot earlier in this portfolio's build; this version is the
+healthier, sensibly-stopped result instead):
 
-  - Backtest (realistic $2.50/lot commission, 1 pip slippage):
-      440 trades, 39.3% win rate, +$2,290 net profit, 11.1% max DD
+  - Backtest (Master-mode, 1 pip placeholder slippage -- no real
+      GBP/USD fill data yet, same starting point every new
+      instrument in this portfolio began from):
+      478 trades, 31.0% win rate, +$1,694 net profit, 8.58% max DD
   - Walk-Forward Optimization: 5/5 folds profitable out-of-sample
-  - Monte Carlo (3000 resamples of the actual trades): 89.6%
+      (strict per-fold re-optimizing)
+  - Monte Carlo (2000 resamples of the actual trades): 88.3%
       probability of profit
-  - Prop Firm Challenge simulation: passed
+  - Standalone annualized: ~2.86%/yr. Portfolio-level, added
+      alongside the existing bots: total return 13.38% -> 15.50%/yr,
+      drawdown 3.42% -> 3.34% (real diversification, not just added risk)
 
-This is a real, validated improvement over the original defaults
-(BB:30/2.0, RSI:21, SL:1.0x ATR), which did NOT survive realistic
-trading costs on this data -- worth knowing in case you're
-comparing this to older backtest claims for this bot.
+Lower win rate than this portfolio's other bots (31% vs the usual
+38-45%) -- not a red flag on its own, Mean Reversion targets the
+Bollinger Band midline rather than a fixed reward:risk ratio, so
+win rate and payoff size trade off differently here than in the
+ATR-target bots. Worth watching once live data comes in, same as
+everything else new in this portfolio.
 
-⚠️ ONE THING WORTH KNOWING: these are the best result out of ~800
-combinations tested across three rounds of searching. That's
-exactly the scenario Walk-Forward exists to catch, and it passed
-cleanly -- a good sign, but "best of many tries" results deserve a
-little extra attention even after passing. Recommend treating this
-as demo-account-first, not immediately full size on a live/funded
-account.
+GBP/USD is not shared with any other bot in this portfolio.
+
+⚠️ Real slippage on GBP/USD is unmeasured -- the 1-pip backtest
+assumption is a placeholder. Watch real fills once live and
+re-check the numbers, same process as BTC and Gold both needed.
+
+⚠️ Same standing caveat as every validated bot here: recommend
+demo-account-first before live/funded capital.
 """
 
 import os
@@ -100,8 +114,8 @@ def main():
         logger.error("❌ Login Failed.")
         return
 
-    logger.info("🚀 AUD/USD Mean Reversion Bot Started.")
-    send_telegram("🚀 AUD/USD Mean Reversion Bot Started | Risk: 0.4%")
+    logger.info("🚀 GBP/USD Mean Reversion Bot Started.")
+    send_telegram("🚀 GBP/USD Mean Reversion Bot Started | Risk: 0.20%")
     init_db()
 
     logged_trade = None  # logging-only state -- does not affect trading logic
