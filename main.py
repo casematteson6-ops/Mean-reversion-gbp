@@ -119,7 +119,7 @@ def main():
     init_db()
 
     logged_trade = None  # logging-only state -- does not affect trading logic
-    last_signal_candle_ts = None  # candle-cooldown guard
+    last_signal_open_time = None  # candle-cooldown guard (time-based -- see fix note below)
 
     while True:
         try:
@@ -160,19 +160,23 @@ def main():
                 time.sleep(60)
                 continue
 
-            # ── Candle-cooldown guard ────────────────────────────────────────
-            # This bot polls every 5 minutes but trades H1 candles. Without this,
-            # the same candle's signal re-fires on every poll until the candle
-            # closes -- so a stop-out can be immediately followed by re-entry on
-            # the identical signal, repeatedly. (That exact loop cost ~$200 on a
-            # BTC bot on 2026-08-06.) The Match Trader candle payload carries no
-            # timestamp, so each candle is fingerprinted by its OHLC values.
-            # ─────────────────────────────────────────────────────────────────
-            _last = df.iloc[-1]
-            candle_ts = (round(_last["close"],5), round(_last["high"],5), round(_last["low"],5))
-            if candle_ts == last_signal_candle_ts:
-                time.sleep(LOOP_SLEEP)
-                continue
+            # ── Candle-cooldown guard (FIXED) ──────────────────────────────
+            # The original version fingerprinted the last candle's own
+            # (close, high, low) values -- that only works if the last row is
+            # a fully-closed candle. If get_candles() returns the CURRENTLY-
+            # FORMING candle as the last row (confirmed happening live on the
+            # BTC bot: 5 entries within a single real hour, each stopping out
+            # in under 8 minutes), its OHLC change on every poll as price
+            # moves, so the fingerprint never matches twice and the guard
+            # silently never blocks anything. Replaced with a real elapsed-
+            # time cooldown, which doesn't depend on candle-close state.
+            # ─────────────────────────────────────────────────────────────
+            _now = datetime.now(timezone.utc)
+            if last_signal_open_time is not None:
+                _minutes_since_last = (_now - last_signal_open_time).total_seconds() / 60
+                if _minutes_since_last < 55:
+                    time.sleep(LOOP_SLEEP)
+                    continue
 
             df   = compute_indicators(df)
             last = df.iloc[-1]
@@ -200,7 +204,7 @@ def main():
                     log_trade_open(bot_name=BOT_NAME, symbol=SYMBOL, direction="BUY",
                                     order_id=order_id, entry_price=close,
                                     entry_time=datetime.now(timezone.utc), sl=sl, tp=tp, lot_size=lots)
-                    last_signal_candle_ts = candle_ts
+                    last_signal_open_time = _now
                     send_telegram(f"✅ LONG {SYMBOL} Opened\nEntry: {close} | SL: {sl} | TP: {tp}")
 
             # SHORT Signal
@@ -214,7 +218,7 @@ def main():
                     log_trade_open(bot_name=BOT_NAME, symbol=SYMBOL, direction="SELL",
                                     order_id=order_id, entry_price=close,
                                     entry_time=datetime.now(timezone.utc), sl=sl, tp=tp, lot_size=lots)
-                    last_signal_candle_ts = candle_ts
+                    last_signal_open_time = _now
                     send_telegram(f"✅ SHORT {SYMBOL} Opened\nEntry: {close} | SL: {sl} | TP: {tp}")
 
         except Exception as e:
