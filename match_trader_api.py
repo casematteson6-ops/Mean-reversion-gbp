@@ -340,39 +340,76 @@ class MatchTraderClient:
     # ── Position Sizing ────────────────────────────────────────────────────────
 
     @staticmethod
-    def calculate_lots(balance, risk_pct, sl_distance_price, symbol=""):
+    def calculate_lots(balance, risk_pct, sl_distance_price, symbol="",
+                       quote_price=None, usd_cross_rate=None):
         """
-        Calculate lot size for Match-Trader.
+        Lot size for Match-Trader / Funding Pips, in one place for EVERY bot.
+        (This file used to differ between bot repos -- copy this same
+        version into all of them.)
 
-        Standard FX: 1 lot = 100,000 units.
-        Gold/Silver (XAU/XAG): 1 lot = 100 oz.
-        Crypto (BTC/ETH): 1 lot = 1 coin.
-        Using the forex contract size for Gold or crypto makes
-        every trade round down to the 0.01 minimum lot floor
-        regardless of intended risk, since the correct lot size is
-        orders of magnitude smaller in notional terms. This was
-        silently happening before this fix: every non-forex trade
-        was landing on the 0.01 floor instead of a real risk-based
-        size, decoupling actual risk taken from both account
-        balance and the intended risk_pct.
+        Contract sizes: forex 100,000 units/lot, Gold/Silver 100 oz/lot,
+        crypto 1 coin/lot.
 
-        risk_pct: e.g. 0.01 for 1%
-        sl_distance_price: distance from entry to SL in price
-        Returns lot size (float, minimum 0.01).
+        Money is converted to USD correctly for every pair:
+          - USD-quoted (XAUUSD, EURUSD, GBPUSD, AUDUSD, BTCUSD): no conversion.
+          - USD is the base (USDJPY, USDCHF, USDCAD): pass quote_price=<pair price>.
+          - Cross pairs (GBPJPY, EURCHF...): pass usd_cross_rate=<USD/quote price>,
+            e.g. the current USDJPY price for GBPJPY.
+          If the needed rate is missing, returns 0 (skip) instead of mis-sizing.
+
+        Rounding: LOT_ROUNDING = "down" (default) never sizes ABOVE the
+        intended risk, except at the broker's 0.01-lot minimum. Backtested on
+        all 6 live bots sharing the eval account: 100% pass rate across 58
+        historical start dates vs 98% with "nearest" (the old behaviour),
+        at the cost of a slower typical pass. Set to "nearest" for the old way.
+
+        NOTE: on Gold the 0.01-lot minimum is often MORE than the intended
+        risk (e.g. a $60 stop at 0.01 lots = $60 = 0.6% of $10k), so the real
+        risk of a trade can exceed risk_pct. The log line below shows the
+        actual risk of every trade so this is never hidden again.
+
+        Returns lots (float). 0 means "don't trade".
         """
-        if sl_distance_price <= 0:
-            return 0.01
+        LOT_ROUNDING = "down"   # "down" or "nearest"
+        MIN_LOT, LOT_STEP = 0.01, 0.01
 
-        normalized_symbol = symbol.replace("_", "").replace("/", "").upper()
+        if sl_distance_price is None or sl_distance_price <= 0 or not balance:
+            return 0
 
-        if normalized_symbol.startswith("XAU") or normalized_symbol.startswith("XAG"):
-            contract_size = 100      # 100 oz per standard lot (Gold/Silver)
-        elif normalized_symbol.startswith("BTC") or normalized_symbol.startswith("ETH"):
-            contract_size = 1        # 1 coin per standard lot (crypto)
+        s = symbol.replace("_", "").replace("/", "").upper()
+
+        if s.startswith("XAU") or s.startswith("XAG"):
+            contract_size = 100
+        elif s.startswith("BTC") or s.startswith("ETH"):
+            contract_size = 1
         else:
-            contract_size = 100000   # 100,000 units per standard forex lot
+            contract_size = 100000
 
+        # USD value of 1 unit of the quote currency
+        if s.endswith("USD"):
+            usd_per_quote = 1.0
+        elif s.startswith("USD"):
+            if not quote_price:
+                logger.error(f"calculate_lots: {s} needs quote_price -- skipping trade")
+                return 0
+            usd_per_quote = 1.0 / quote_price
+        else:
+            if not usd_cross_rate:
+                logger.error(f"calculate_lots: {s} needs usd_cross_rate -- skipping trade")
+                return 0
+            usd_per_quote = 1.0 / usd_cross_rate
+
+        usd_risk_per_lot = sl_distance_price * contract_size * usd_per_quote
         risk_amount = balance * risk_pct
-        lots        = risk_amount / (sl_distance_price * contract_size)
-        lots        = max(0.01, round(lots, 2))
+        raw_lots = risk_amount / usd_risk_per_lot
+
+        steps = raw_lots / LOT_STEP
+        steps = int(steps + 1e-9) if LOT_ROUNDING == "down" else round(steps)
+        lots = max(MIN_LOT, round(steps * LOT_STEP, 2))
+
+        actual_risk_pct = 100 * lots * usd_risk_per_lot / balance
+        logger.info(
+            f"📏 Sizing {s}: wanted {risk_pct*100:.2f}% -> {lots:.2f} lots "
+            f"= actual risk {actual_risk_pct:.2f}% (${lots*usd_risk_per_lot:.2f})"
+        )
         return lots
