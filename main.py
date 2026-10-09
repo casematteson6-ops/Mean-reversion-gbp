@@ -115,7 +115,7 @@ def main():
         return
 
     logger.info("🚀 GBP/USD Mean Reversion Bot Started.")
-    send_telegram("🚀 GBP/USD Mean Reversion Bot Started | Risk: 0.20%")
+    send_telegram(f"🚀 GBP/USD Mean Reversion Bot Started | Risk: {RISK_PCT*100:.2f}% per trade")
     init_db()
 
     logged_trade = None  # logging-only state -- does not affect trading logic
@@ -134,6 +134,13 @@ def main():
                 continue
 
             positions = client.get_open_positions(SYMBOL)
+            if positions is None:
+                # API call failed -- we do NOT know whether a position is
+                # open. Treating this as "no position" could log a fake
+                # close and open a DUPLICATE trade, so skip this cycle.
+                logger.warning("⚠️ Could not fetch open positions -- skipping this cycle.")
+                time.sleep(60)
+                continue
 
             if handle_master_account_safety(client, logged_trade, BOT_NAME, send_telegram):
                 logged_trade = None
